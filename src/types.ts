@@ -6,9 +6,18 @@ export interface RateLimiterLogger {
   error(...args: any[]): void;
 }
 
+export type RateLimiterAlgorithm = 'sliding-window' | 'token-bucket';
+
+export interface TokenBucketConfig {
+  bucketSize?: number;       // Maximum tokens in the bucket; defaults to maxRequests
+  refillRate?: number;       // Tokens replenished per second; defaults to maxRequests / (windowMs / 1000)
+}
+
 export interface RateLimiterConfig {
-  windowMs: number; // Sliding window size in milliseconds
-  maxRequests: number; // Maximum requests allowed per window
+  algorithm?: RateLimiterAlgorithm;
+  windowMs: number; // Sliding window size in milliseconds or token bucket refill evaluation window
+  maxRequests: number; // Maximum requests allowed per window or bucket capacity
+  tokenBucket?: TokenBucketConfig; // Optional token bucket settings when using token bucket
   keyGenerator?: (req: Request) => string; // Function to derive client key, default IP
   skip?: (req: Request) => boolean; // Optional skip function for trusted traffic
   onLimitReached?: (req: Request, res: Response, info: RateLimitInfo) => void;
@@ -26,16 +35,27 @@ export interface RateLimiterHeadersConfig {
 }
 
 export interface RateLimiterStore {
-  increment(key: string, timestamp: number): Promise<RateLimiterEntry>;
   get(key: string): Promise<RateLimiterEntry | null>;
+  set(key: string, entry: RateLimiterEntry): Promise<void>;
   reset(key: string): Promise<void>;
 }
 
-export interface RateLimiterEntry {
-  count: number;
-  firstRequestAt: number;
-  lastRequestAt: number;
+export interface SlidingWindowEntry {
+  type: 'sliding-window';
+  timestamps: number[];
+  lastAccessedAt: number;
 }
+
+export interface TokenBucketEntry {
+  type: 'token-bucket';
+  tokens: number;
+  lastRefillAt: number;
+  bucketSize: number;
+  refillRate: number;
+  lastAccessedAt: number;
+}
+
+export type RateLimiterEntry = SlidingWindowEntry | TokenBucketEntry;
 
 export interface RateLimiterMetrics {
   recordAllowed?(req: Request, info: RateLimitInfo): void;

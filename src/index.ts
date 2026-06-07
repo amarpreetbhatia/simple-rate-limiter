@@ -1,15 +1,19 @@
 import { Request, Response, RequestHandler } from 'express';
 import {
+  RateLimiterAlgorithm,
   RateLimiterConfig,
-  RateLimiterStore,
-  RateLimiterLogger,
+  RateLimiterEntry,
   RateLimiterHeadersConfig,
+  RateLimiterLogger,
+  RateLimiterStore,
   RateLimitInfo,
+  SlidingWindowEntry,
+  TokenBucketEntry,
 } from './types';
 import { InMemoryStore } from './store';
 
 /**
- * Default logger that wraps console methods
+ * Default logger that wraps console methods.
  */
 const createDefaultLogger = (): RateLimiterLogger => ({
   log: (...args: any[]) => console.log(...args),
@@ -17,10 +21,15 @@ const createDefaultLogger = (): RateLimiterLogger => ({
   error: (...args: any[]) => console.error(...args),
 });
 
+/**
+ * Create an Express rate limiter middleware.
+ */
 export function createRateLimiter(config: RateLimiterConfig): RequestHandler {
   const {
+    algorithm = 'sliding-window',
     windowMs,
     maxRequests,
+    tokenBucket,
     keyGenerator = defaultKeyGenerator,
     skip,
     onLimitReached,
@@ -31,55 +40,87 @@ export function createRateLimiter(config: RateLimiterConfig): RequestHandler {
     logger = createDefaultLogger(),
   } = config;
 
-  // Normalize headers config
   const headersEnabled =
     typeof headersConfig === 'boolean' ? headersConfig : headersConfig.enabled;
   const retryAfterHeader =
     typeof headersConfig === 'object' ? headersConfig.retryAfterHeader !== false : true;
+  const customHeaders =
+    typeof headersConfig === 'object' ? headersConfig.customHeaders : undefined;
+  const bucketSize = tokenBucket?.bucketSize ?? maxRequests;
+  const refillRate = tokenBucket?.refillRate ?? (maxRequests * 1000) / windowMs;
 
-  // Track which clients have triggered the limit callback
   const limitReachedClients = new Set<string>();
 
   return async (req: Request, res: Response, next: Function) => {
     try {
-      // Check if this request should skip rate limiting
       if (skip && skip(req)) {
         return next();
       }
 
       const key = keyGenerator(req);
       const now = Date.now();
+      const entry = await store.get(key);
 
-      // Get or create the entry in the store
-      const entry = await store.increment(key, now);
+      let info: RateLimitInfo;
+      let isBlocked = false;
 
-      // Calculate requests within the sliding window
-      const windowStart = now - windowMs;
-      const requestsInWindow =
-        entry.firstRequestAt <= windowStart
-          ? calculateWindowRequests(entry, now, windowMs)
-          : entry.count;
+      if (algorithm === 'token-bucket') {
+        const { bucketEntry, allowed } = createOrUpdateTokenBucketEntry(
+          entry,
+          now,
+          bucketSize,
+          refillRate
+        );
 
-      const remainingRequests = Math.max(0, maxRequests - requestsInWindow);
-      const resetInMs = Math.max(0, entry.firstRequestAt + windowMs - now);
+        await store.set(key, bucketEntry);
 
-      const info: RateLimitInfo = {
-        key,
-        windowMs,
-        maxRequests,
-        currentRequests: requestsInWindow,
-        remainingRequests,
-        resetInMs,
-      };
+        const remainingRequests = Math.max(0, Math.floor(bucketEntry.tokens));
+        const resetInMs = allowed
+          ? 0
+          : Math.ceil((1 - bucketEntry.tokens) / refillRate * 1000);
+        const currentRequests = bucketSize - remainingRequests;
 
-      // Set response headers if enabled
-      if (headersEnabled) {
-        setRateLimitHeaders(res, info, retryAfterHeader);
+        info = {
+          key,
+          windowMs,
+          maxRequests: bucketSize,
+          currentRequests,
+          remainingRequests,
+          resetInMs,
+        };
+
+        if (!allowed) {
+          isBlocked = true;
+        }
+      } else {
+        const windowEntry = createOrUpdateSlidingWindowEntry(entry, now, windowMs);
+        await store.set(key, windowEntry);
+
+        const currentRequests = windowEntry.timestamps.length;
+        const remainingRequests = Math.max(0, maxRequests - currentRequests);
+        const resetInMs = currentRequests === 0
+          ? windowMs
+          : Math.max(0, windowMs - (now - windowEntry.timestamps[0]));
+
+        info = {
+          key,
+          windowMs,
+          maxRequests,
+          currentRequests,
+          remainingRequests,
+          resetInMs,
+        };
+
+        if (currentRequests > maxRequests) {
+          isBlocked = true;
+        }
       }
 
-      // Check if limit exceeded
-      if (requestsInWindow > maxRequests) {
-        // Call onLimitReached only once per client
+      if (headersEnabled) {
+        setRateLimitHeaders(res, info, retryAfterHeader, customHeaders);
+      }
+
+      if (isBlocked) {
         if (!limitReachedClients.has(key)) {
           limitReachedClients.add(key);
           if (onLimitReached) {
@@ -87,18 +128,15 @@ export function createRateLimiter(config: RateLimiterConfig): RequestHandler {
           }
         }
 
-        // Block the request
         if (onBlocked) {
           onBlocked(req, res, info);
         } else {
-          // Default behavior: respond with 429 Too Many Requests
           res.status(429).json({
             error: 'Too Many Requests',
-            retryAfter: Math.ceil(resetInMs / 1000),
+            retryAfter: Math.ceil(info.resetInMs / 1000),
           });
         }
 
-        // Record blocked metric
         if (metrics?.recordBlocked) {
           metrics.recordBlocked(req, info);
         }
@@ -106,7 +144,6 @@ export function createRateLimiter(config: RateLimiterConfig): RequestHandler {
         return;
       }
 
-      // Request is allowed
       if (metrics?.recordAllowed) {
         metrics.recordAllowed(req, info);
       }
@@ -115,59 +152,80 @@ export function createRateLimiter(config: RateLimiterConfig): RequestHandler {
         metrics.recordCurrentUsage(req, info);
       }
 
-      // Clean up the limit reached set for this client to prepare for next window
-      if (remainingRequests > 0 && limitReachedClients.has(key)) {
+      if (info.remainingRequests > 0 && limitReachedClients.has(key)) {
         limitReachedClients.delete(key);
       }
 
       next();
     } catch (error) {
-      // Fail open: allow traffic if store fails, but log the error
       logger.error('Rate limiter error:', error);
-      // Log incident but allow the request
       next();
     }
   };
 }
 
 /**
- * Default key generator using client IP address
+ * Default key generator using client IP address.
  */
 function defaultKeyGenerator(req: Request): string {
   return req.ip || 'unknown';
 }
 
-/**
- * Calculate approximate requests in the sliding window
- * Using a simple approach: if the window spans two time buckets,
- * we weight the requests proportionally
- */
-function calculateWindowRequests(
-  entry: { count: number; firstRequestAt: number; lastRequestAt: number },
+function createOrUpdateSlidingWindowEntry(
+  entry: RateLimiterEntry | null,
   now: number,
   windowMs: number
-): number {
+): SlidingWindowEntry {
   const windowStart = now - windowMs;
+  const currentEntry: SlidingWindowEntry =
+    entry && entry.type === 'sliding-window'
+      ? entry
+      : { type: 'sliding-window', timestamps: [], lastAccessedAt: now };
 
-  // If all requests are within the window, count them all
-  if (entry.firstRequestAt > windowStart) {
-    return entry.count;
-  }
+  currentEntry.timestamps = currentEntry.timestamps.filter((timestamp) => timestamp > windowStart);
+  currentEntry.timestamps.push(now);
+  currentEntry.lastAccessedAt = now;
 
-  // If the oldest request is before the window start,
-  // we assume requests are distributed over time
-  // For simplicity, we count all recent requests
-  // A more sophisticated implementation would track individual timestamps
-  return Math.max(1, entry.count);
+  return currentEntry;
 }
 
-/**
- * Set standard rate limit headers on the response
- */
+function createOrUpdateTokenBucketEntry(
+  entry: RateLimiterEntry | null,
+  now: number,
+  bucketSize: number,
+  refillRate: number
+): { bucketEntry: TokenBucketEntry; allowed: boolean } {
+  const currentEntry: TokenBucketEntry =
+    entry && entry.type === 'token-bucket'
+      ? entry
+      : {
+          type: 'token-bucket',
+          tokens: bucketSize,
+          lastRefillAt: now,
+          bucketSize,
+          refillRate,
+          lastAccessedAt: now,
+        };
+
+  const elapsedMs = now - currentEntry.lastRefillAt;
+  const refillTokens = (elapsedMs / 1000) * currentEntry.refillRate;
+  const availableTokens = Math.min(currentEntry.bucketSize, currentEntry.tokens + refillTokens);
+  const allowed = availableTokens >= 1;
+
+  currentEntry.tokens = allowed ? availableTokens - 1 : availableTokens;
+  currentEntry.lastRefillAt = now;
+  currentEntry.lastAccessedAt = now;
+  currentEntry.bucketSize = bucketSize;
+  currentEntry.refillRate = refillRate;
+
+  return { bucketEntry: currentEntry, allowed };
+}
+
 function setRateLimitHeaders(
   res: Response,
   info: RateLimitInfo,
-  retryAfterHeader: boolean
+  retryAfterHeader: boolean,
+  customHeaders?: Record<string, string | number>
 ): void {
   res.setHeader('X-RateLimit-Limit', info.maxRequests);
   res.setHeader('X-RateLimit-Remaining', info.remainingRequests);
@@ -175,6 +233,12 @@ function setRateLimitHeaders(
 
   if (retryAfterHeader && info.remainingRequests === 0) {
     res.setHeader('Retry-After', Math.ceil(info.resetInMs / 1000));
+  }
+
+  if (customHeaders) {
+    for (const [name, value] of Object.entries(customHeaders)) {
+      res.setHeader(name, String(value));
+    }
   }
 }
 

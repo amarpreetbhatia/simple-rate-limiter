@@ -1,10 +1,10 @@
 # Rate Limiter Middleware
 
-A TypeScript-based Express rate limiter middleware using the sliding window algorithm to limit requests by client IP address. Designed for transparency, observability, and extensibility.
+A TypeScript-based Express rate limiter middleware supporting both sliding window and token bucket algorithms for per-IP request limiting. Designed for transparency, observability, and extensibility.
 
 ## Features
 
-- ✅ **Sliding Window Algorithm** – Smoother rate limiting without fixed window boundaries
+- ✅ **Algorithm selection** – Supports both sliding window and token bucket modes
 - ✅ **Per-IP Rate Limiting** – Identifies clients by IP address (customizable)
 - ✅ **Configurable Storage** – In-memory store provided; bring your own Redis/Memcached
 - ✅ **Observability Hooks** – Metrics and monitoring integration support
@@ -48,8 +48,10 @@ app.listen(3000);
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `windowMs` | `number` | required | Sliding window size in milliseconds |
-| `maxRequests` | `number` | required | Maximum requests per window |
+| `algorithm` | `'sliding-window' \| 'token-bucket'` | `sliding-window` | Select which rate limiting algorithm to use |
+| `windowMs` | `number` | required | Sliding window interval or token bucket evaluation window in ms |
+| `maxRequests` | `number` | required | Allowed requests per window or token bucket capacity |
+| `tokenBucket` | `TokenBucketConfig` | none | Optional token bucket settings when using `token-bucket` |
 | `keyGenerator` | `(req) => string` | `req.ip` | Function to derive client key |
 | `skip` | `(req) => boolean` | none | Skip rate limiting for specific requests |
 | `headers` | `boolean \| object` | `false` | Enable standard rate limit headers |
@@ -142,6 +144,20 @@ const limiter = createRateLimiter({
 });
 ```
 
+### Algorithm Selection
+
+```typescript
+const limiter = createRateLimiter({
+  algorithm: 'token-bucket',
+  windowMs: 60_000,
+  maxRequests: 100,
+  tokenBucket: {
+    bucketSize: 100,
+    refillRate: 1, // one token per second
+  },
+});
+```
+
 ### Custom Response on Block
 
 ```typescript
@@ -182,17 +198,12 @@ import redis from 'redis';
 const redisClient = redis.createClient();
 
 const customStore: RateLimiterStore = {
-  async increment(key: string, timestamp: number) {
-    const entry = JSON.parse(await redisClient.get(key) || '{}');
-    entry.count = (entry.count || 0) + 1;
-    entry.lastRequestAt = timestamp;
-    if (!entry.firstRequestAt) entry.firstRequestAt = timestamp;
-    await redisClient.set(key, JSON.stringify(entry), 'EX', 3600);
-    return entry;
-  },
   async get(key: string) {
     const data = await redisClient.get(key);
     return data ? JSON.parse(data) : null;
+  },
+  async set(key: string, entry: any) {
+    await redisClient.set(key, JSON.stringify(entry), 'EX', 3600);
   },
   async reset(key: string) {
     await redisClient.del(key);
@@ -269,13 +280,18 @@ Factory function that returns an Express middleware.
 ### Types
 
 ```typescript
+interface TokenBucketConfig {
+  bucketSize?: number; // Maximum tokens in the bucket
+  refillRate?: number; // Tokens replenished per second
+}
+
 interface RateLimitInfo {
   key: string;                    // Client identifier
-  windowMs: number;               // Window size
-  maxRequests: number;            // Request limit
-  currentRequests: number;        // Requests in current window
-  remainingRequests: number;      // Remaining allowed requests
-  resetInMs: number;              // ms until window resets
+  windowMs: number;               // Window size or evaluation interval
+  maxRequests: number;            // Request limit or bucket capacity
+  currentRequests: number;        // Used requests or consumed tokens
+  remainingRequests: number;      // Remaining allowed requests or available tokens
+  resetInMs: number;              // ms until the next reset or token refill
 }
 
 interface RateLimiterLogger {
@@ -285,46 +301,45 @@ interface RateLimiterLogger {
 }
 
 interface RateLimiterStore {
-  increment(key: string, timestamp: number): Promise<RateLimiterEntry>;
   get(key: string): Promise<RateLimiterEntry | null>;
+  set(key: string, entry: RateLimiterEntry): Promise<void>;
   reset(key: string): Promise<void>;
 }
 ```
 
-## Sliding Window Algorithm
+## Algorithms
 
-The middleware uses a sliding window algorithm, which provides better fairness than fixed windows:
+This middleware supports two rate limiting algorithms:
 
-- **No burst at boundaries**: Prevents doubling of requests at window boundaries
-- **Continuous evaluation**: Limits evaluated over actual recent interval
-- **Better UX**: More gradual degradation as users approach limits
+- `sliding-window`: ideal for request quotas over a moving time window.
+- `token-bucket`: ideal for smoothing traffic and allowing controlled bursts.
 
-### How it works
+### Sliding window behavior
 
-1. Increment counter for client at current timestamp
-2. Calculate requests in interval `[now - windowMs, now]`
-3. If count exceeds `maxRequests`, block request
-4. Otherwise, allow and track in metrics
+- The middleware tracks request timestamps.
+- It counts requests in the interval `[now - windowMs, now]`.
+- If the count exceeds `maxRequests`, the request is blocked.
+
+### Token bucket behavior
+
+- Each client has a bucket of tokens.
+- The bucket refills at `refillRate` tokens per second.
+- Each request consumes one token.
+- If tokens are unavailable, the request is blocked until tokens replenish.
 
 ## Error Handling
 
 The middleware implements **fail-open** semantics:
 
-- If the store fails to respond, the request is **allowed**
-- An error is logged for monitoring
-- This ensures the rate limiter doesn't become a point of failure
+- If the store fails to respond, the request is **allowed**.
+- An error is logged for monitoring.
+- This ensures the rate limiter doesn't become a point of failure.
 
 ## Performance Considerations
 
-- **In-memory store**: Suitable for single-instance deployments; ~1000 active clients max
-- **Distributed store**: Use Redis/Memcached for multi-instance deployments
-- **Cleanup**: In-memory store periodically cleans old entries to prevent memory leaks
-
-# Running in Codebase
-- Step 1 `sudo apt update`
-- Step 2 `sudo add-apt-repository universe`
-- Step 3 `sudo apt update`
-- Step 4 `sudo apt install bubblewrap socat`
+- **In-memory store**: Suitable for single-instance deployments; avoid using it for very high client counts.
+- **Distributed store**: Use Redis/Memcached for multi-instance deployments.
+- **Cleanup**: In-memory store periodically removes stale entries to prevent memory growth.
 
 ## License
 

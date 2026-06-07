@@ -2,7 +2,7 @@
 
 ## Overview
 
-This specification defines a Node.js Express rate limiter middleware built in TypeScript. It limits requests by client IP address and uses a sliding window algorithm to minimize burstiness while staying accurate over time.
+This specification defines a Node.js Express rate limiter middleware built in TypeScript. It limits requests by client IP address and supports configurable rate limiting algorithms, including sliding window and token bucket, so users can select the behavior that best fits their traffic profile.
 
 The preferred interface is a factory function:
 
@@ -32,8 +32,10 @@ function createRateLimiter(config: RateLimiterConfig): RequestHandler;
 import { RequestHandler } from 'express';
 
 export interface RateLimiterConfig {
-  windowMs: number;         // Sliding window size in milliseconds
-  maxRequests: number;      // Maximum requests allowed per window
+  algorithm?: 'sliding-window' | 'token-bucket';
+  windowMs: number;         // Sliding window size in milliseconds or token bucket refill interval
+  maxRequests: number;      // Maximum requests allowed in a window or bucket capacity
+  tokenBucket?: TokenBucketConfig; // Optional token bucket settings when using token bucket
   keyGenerator?: (req: Request) => string; // Function to derive client key, default IP
   skip?: (req: Request) => boolean;       // Optional skip function for trusted traffic
   onLimitReached?: (req: Request, res: Response, info: RateLimitInfo) => void;
@@ -41,6 +43,11 @@ export interface RateLimiterConfig {
   headers?: boolean | RateLimiterHeadersConfig; // Send standard rate limit headers
   store?: RateLimiterStore;   // Optional custom store for distributed deployments
   metrics?: RateLimiterMetrics; // Optional metrics collector hooks
+}
+
+export interface TokenBucketConfig {
+  bucketSize?: number;       // Maximum number of tokens in the bucket; defaults to maxRequests
+  refillRate: number;        // Tokens replenished per second
 }
 
 export interface RateLimiterHeadersConfig {
@@ -81,35 +88,56 @@ export interface RateLimitInfo {
 
 1. The middleware determines a client key using `keyGenerator`. By default, it uses the request IP address.
 2. If `skip(req)` returns `true`, the request bypasses rate limiting.
-3. The middleware adds or updates a sliding window counter in the store.
-4. If the request count exceeds `maxRequests`, the middleware blocks the request.
-5. If configured, response headers include the number of remaining requests and the reset time.
+3. The middleware adds or updates rate limit state in the store according to the selected algorithm.
+4. If the request exceeds the allowed rate or available tokens, the middleware blocks the request.
+5. If configured, response headers include the number of remaining requests or tokens and the reset time.
 6. Monitoring hooks are called for allowed or blocked requests.
 
-## Sliding Window Algorithm
+## Rate Limiting Algorithms
 
-### Why sliding window?
+### Algorithm selection
 
-The sliding window algorithm is chosen because it provides a better balance of fairness and enforcement compared to the fixed window approach.
+The rate limiter supports two configurable algorithms:
 
-Benefits over fixed window:
+- `sliding-window` (default): tracks requests over a moving time window for accurate burst control.
+- `token-bucket`: maintains a bucket of tokens that refill over time, allowing smoother request pacing and controlled bursts.
 
-- Reduces burstiness at window boundaries. Fixed windows allow a burst of up to `2 * limit` when a client sends requests at the end of one window and the beginning of the next.
-- More accurate representation of recent traffic, because limits are evaluated continuously across the configured interval.
-- Better UX for clients, since limits are not reset abruptly at discrete boundaries.
-
-Benefits over token bucket and leaky bucket for this use case:
-
-- Simpler to reason about for request-count limits over a time window.
-- More deterministic behavior when the goal is "N requests per interval" rather than controlling rate over time.
-- Easier to implement with an in-memory or distributed sliding counter store.
+Consumers can choose the algorithm that best matches their requirements.
 
 ### Sliding window behavior
 
-- Let `windowMs` be the configured time interval, and `maxRequests` be the allowed requests.
+The sliding window algorithm is ideal when the goal is a strict maximum number of requests in a recent interval.
+
+Benefits:
+
+- Reduces burstiness at window boundaries compared to fixed windows.
+- Provides a more accurate view of recent traffic than a single fixed window.
+- Works well when enforcing quotas like "N requests per minute." 
+
+Behavior:
+
+- Let `windowMs` be the configured time interval and `maxRequests` be the allowed requests.
 - The middleware calculates the count of requests made in the interval `(now - windowMs, now]`.
-- It can approximate the sliding window by combining the current bucket and the previous bucket proportionally.
-- A well-designed implementation updates the store with the current timestamp and prunes or weights older requests.
+- It can approximate the sliding window by combining current and prior request data.
+- A well-designed implementation updates the store with timestamps and prunes or weights older entries.
+
+### Token bucket behavior
+
+The token bucket algorithm is useful when you want to allow steady request flow while also permitting short bursts.
+
+Benefits:
+
+- Smooths traffic over time by refilling tokens at a constant rate.
+- Allows bursts up to the bucket capacity without exceeding average rate limits.
+- Works well for APIs where a sustained rate is more important than strict per-window quotas.
+
+Behavior:
+
+- Each client has a bucket with a maximum number of tokens.
+- The bucket refills at `refillRate` tokens per second, up to `bucketSize`.
+- Each request consumes a token.
+- If no tokens remain, the request is blocked until tokens replenish.
+- `bucketSize` can default to `maxRequests` when not explicitly configured.
 
 ## Headers
 
@@ -175,8 +203,10 @@ app.get('/', (req, res) => {
 
 ## Configuration Options
 
-- `windowMs`: sliding window length in milliseconds.
-- `maxRequests`: maximum number of requests allowed during the sliding window.
+- `algorithm`: `'sliding-window' | 'token-bucket'` — selects the rate limiting algorithm; defaults to `sliding-window`.
+- `windowMs`: sliding window length in milliseconds or token bucket refill evaluation window.
+- `maxRequests`: maximum number of requests allowed during the sliding window or bucket capacity when using token bucket.
+- `tokenBucket`: optional token bucket settings when `algorithm` is `token-bucket`.
 - `keyGenerator`: custom function to identify clients, default is `req.ip`.
 - `skip`: conditional bypass for health checks, internal IPs, or static assets.
 - `onLimitReached`: callback when a client first reaches the limit.
@@ -195,4 +225,4 @@ app.get('/', (req, res) => {
 
 ## Summary
 
-This specification defines a TypeScript Express middleware factory `createRateLimiter(config) => middleware` that enforces per-IP rate limiting using the sliding window algorithm, supports observability, and is extensible through custom stores and metrics hooks.
+This specification defines a TypeScript Express middleware factory `createRateLimiter(config) => middleware` that enforces per-IP rate limiting using configurable algorithms (`sliding-window` or `token-bucket`), supports observability, and is extensible through custom stores and metrics hooks.

@@ -1,10 +1,10 @@
-import express, { Request, Response } from 'express';
+import express from 'express';
 import request from 'supertest';
-import { createRateLimiter, InMemoryStore } from './index';
+import { createRateLimiter } from './index';
 import { RateLimiterLogger } from './types';
 
 describe('createRateLimiter', () => {
-  it('allows requests below the limit', async () => {
+  it('allows requests below the limit for sliding window', async () => {
     const app = express();
     app.use(createRateLimiter({ windowMs: 1000, maxRequests: 2 }));
     app.get('/', (req, res) => res.status(200).send('ok'));
@@ -13,7 +13,7 @@ describe('createRateLimiter', () => {
     await request(app).get('/').expect(200, 'ok');
   });
 
-  it('blocks requests above the limit', async () => {
+  it('blocks requests above the limit for sliding window', async () => {
     const app = express();
     app.use(createRateLimiter({ windowMs: 1000, maxRequests: 1, headers: true }));
     app.get('/', (req, res) => res.status(200).send('ok'));
@@ -28,6 +28,34 @@ describe('createRateLimiter', () => {
     expect(response.headers['x-ratelimit-limit']).toBe('1');
     expect(response.headers['x-ratelimit-remaining']).toBe('0');
     expect(response.headers['retry-after']).toBeDefined();
+  });
+
+  it('uses the token bucket algorithm for burstable traffic', async () => {
+    jest.useFakeTimers();
+    const app = express();
+    app.use(
+      createRateLimiter({
+        algorithm: 'token-bucket',
+        windowMs: 60000,
+        maxRequests: 2,
+        tokenBucket: {
+          bucketSize: 2,
+          refillRate: 1,
+        },
+        headers: true,
+      })
+    );
+    app.get('/', (req, res) => res.status(200).send('ok'));
+
+    await request(app).get('/').expect(200, 'ok');
+    await request(app).get('/').expect(200, 'ok');
+    await request(app).get('/').expect(429);
+
+    jest.advanceTimersByTime(1000);
+    await Promise.resolve();
+
+    await request(app).get('/').expect(200, 'ok');
+    jest.useRealTimers();
   });
 
   it('skips rate limiting when skip returns true', async () => {
@@ -59,10 +87,10 @@ describe('createRateLimiter', () => {
         maxRequests: 1,
         logger,
         store: {
-          increment: async () => {
+          get: async () => {
             throw new Error('store failure');
           },
-          get: async () => null,
+          set: async () => undefined,
           reset: async () => undefined,
         },
       })

@@ -19,27 +19,13 @@ export class InMemoryStore implements RateLimiterStore {
     this.cleanupInterval.unref();
   }
 
-  async increment(key: string, timestamp: number): Promise<RateLimiterEntry> {
-    let entry = this.store.get(key);
-
-    if (!entry) {
-      entry = {
-        count: 1,
-        firstRequestAt: timestamp,
-        lastRequestAt: timestamp,
-      };
-    } else {
-      entry.count += 1;
-      entry.lastRequestAt = timestamp;
-    }
-
-    this.store.set(key, entry);
-    return { ...entry };
-  }
-
   async get(key: string): Promise<RateLimiterEntry | null> {
     const entry = this.store.get(key);
-    return entry ? { ...entry } : null;
+    return entry ? deepCopy(entry) : null;
+  }
+
+  async set(key: string, entry: RateLimiterEntry): Promise<void> {
+    this.store.set(key, deepCopy(entry));
   }
 
   async reset(key: string): Promise<void> {
@@ -51,7 +37,8 @@ export class InMemoryStore implements RateLimiterStore {
     const keysToDelete: string[] = [];
 
     for (const [key, entry] of this.store.entries()) {
-      if (now - entry.lastRequestAt > this.maxAge) {
+      const lastAccessedAt = ('lastAccessedAt' in entry ? entry.lastAccessedAt : now);
+      if (now - lastAccessedAt > this.maxAge) {
         keysToDelete.push(key);
       }
     }
@@ -75,4 +62,8 @@ export class InMemoryStore implements RateLimiterStore {
   size(): number {
     return this.store.size;
   }
+}
+
+function deepCopy<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value));
 }
