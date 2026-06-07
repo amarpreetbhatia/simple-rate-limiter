@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Home</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Home</h1>
+
+    
+
+
+
+    
+
+
+    <h3> </h3>
+
+
+
+
+
+
+
+
+
+
+    
+
+
+
+
+    <section>
+        <article><h1>simple-rate-limiter</h1>
+<p>A TypeScript-based Express rate limiter middleware supporting both sliding window and token bucket algorithms for per-IP request limiting. Designed for transparency, observability, and extensibility.</p>
+<blockquote>
+<p>Documentation is published with GitHub Pages at: https://amarpreetbhatia.github.io/simple-rate-limiter</p>
+<p>Generate locally with <code>npm run docs:build</code> and open the output in <code>docs/</code>.</p>
+</blockquote>
+<h2>Features</h2>
+<ul>
+<li>✅ <strong>Algorithm selection</strong> – Supports both sliding window and token bucket modes</li>
+<li>✅ <strong>Per-IP Rate Limiting</strong> – Identifies clients by IP address (customizable)</li>
+<li>✅ <strong>Configurable Storage</strong> – In-memory store provided; bring your own Redis/Memcached</li>
+<li>✅ <strong>Observability Hooks</strong> – Metrics and monitoring integration support</li>
+<li>✅ <strong>Standard Headers</strong> – Sends <code>X-RateLimit-*</code> and <code>Retry-After</code> headers</li>
+<li>✅ <strong>Safe Defaults</strong> – Fails open; allows traffic if store fails</li>
+<li>✅ <strong>TypeScript Support</strong> – Full type safety and IDE autocomplete</li>
+</ul>
+<h2>Installation</h2>
+<pre class="prettyprint source lang-bash"><code>npm install express
+npm install --save-dev @types/express typescript ts-node
+</code></pre>
+<p>Once the package is published, install it with:</p>
+<pre class="prettyprint source lang-bash"><code>npm install simple-rate-limiter
+</code></pre>
+<h2>Quick Start</h2>
+<pre class="prettyprint source lang-typescript"><code>import express from 'express';
+import { createRateLimiter } from './index';
+
+const app = express();
+
+const limiter = createRateLimiter({
+  windowMs: 60_000,      // 60 seconds
+  maxRequests: 100,      // 100 requests per window
+  headers: true,         // Enable rate limit headers
+});
+
+app.use(limiter);
+
+app.get('/', (req, res) => {
+  res.send('OK');
+});
+
+app.listen(3000);
+</code></pre>
+<h2>Configuration</h2>
+<h3><code>RateLimiterConfig</code></h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>algorithm</code></td>
+<td><code>'sliding-window' | 'token-bucket'</code></td>
+<td><code>sliding-window</code></td>
+<td>Select which rate limiting algorithm to use</td>
+</tr>
+<tr>
+<td><code>windowMs</code></td>
+<td><code>number</code></td>
+<td>required</td>
+<td>Sliding window interval or token bucket evaluation window in ms</td>
+</tr>
+<tr>
+<td><code>maxRequests</code></td>
+<td><code>number</code></td>
+<td>required</td>
+<td>Allowed requests per window or token bucket capacity</td>
+</tr>
+<tr>
+<td><code>tokenBucket</code></td>
+<td><code>TokenBucketConfig</code></td>
+<td>none</td>
+<td>Optional token bucket settings when using <code>token-bucket</code></td>
+</tr>
+<tr>
+<td><code>keyGenerator</code></td>
+<td><code>(req) =&gt; string</code></td>
+<td><code>req.ip</code></td>
+<td>Function to derive client key</td>
+</tr>
+<tr>
+<td><code>skip</code></td>
+<td><code>(req) =&gt; boolean</code></td>
+<td>none</td>
+<td>Skip rate limiting for specific requests</td>
+</tr>
+<tr>
+<td><code>headers</code></td>
+<td><code>boolean | object</code></td>
+<td><code>false</code></td>
+<td>Enable standard rate limit headers</td>
+</tr>
+<tr>
+<td><code>store</code></td>
+<td><code>RateLimiterStore</code></td>
+<td><code>InMemoryStore</code></td>
+<td>Custom storage backend</td>
+</tr>
+<tr>
+<td><code>metrics</code></td>
+<td><code>RateLimiterMetrics</code></td>
+<td>none</td>
+<td>Observability hooks</td>
+</tr>
+<tr>
+<td><code>logger</code></td>
+<td><code>RateLimiterLogger</code></td>
+<td><code>console</code></td>
+<td>Custom logger instance</td>
+</tr>
+<tr>
+<td><code>onLimitReached</code></td>
+<td><code>(req, res, info) =&gt; void</code></td>
+<td>none</td>
+<td>Callback when limit first reached</td>
+</tr>
+<tr>
+<td><code>onBlocked</code></td>
+<td><code>(req, res, info) =&gt; void</code></td>
+<td>none</td>
+<td>Callback when request is blocked</td>
+</tr>
+</tbody>
+</table>
+<h2>Usage Examples</h2>
+<h3>Basic Setup</h3>
+<pre class="prettyprint source lang-typescript"><code>const limiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  maxRequests: 100,
+});
+
+app.use(limiter);
+</code></pre>
+<h3>With Custom Key Generator</h3>
+<p>Rate limit by user ID instead of IP:</p>
+<pre class="prettyprint source lang-typescript"><code>const limiter = createRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 50,
+  keyGenerator: (req) => req.user?.id || req.ip,
+});
+</code></pre>
+<h3>Skip Rate Limiting for Specific Routes</h3>
+<pre class="prettyprint source lang-typescript"><code>const limiter = createRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 100,
+  skip: (req) => req.path === '/health' || req.path === '/status',
+});
+</code></pre>
+<h3>With Metrics Integration</h3>
+<pre class="prettyprint source lang-typescript"><code>const limiter = createRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 100,
+  metrics: {
+    recordAllowed: (req, info) => {
+      // Send to Prometheus, Datadog, etc.
+      prometheus.counter('rate_limiter_allowed_total', 1);
+    },
+    recordBlocked: (req, info) => {
+      prometheus.counter('rate_limiter_blocked_total', 1);
+    },
+    recordCurrentUsage: (req, info) => {
+      prometheus.gauge('rate_limiter_current_requests', info.currentRequests);
+    },
+  },
+});
+</code></pre>
+<h3>With Custom Logger</h3>
+<pre class="prettyprint source lang-typescript"><code>import { RateLimiterLogger } from './index';
+
+class CustomLogger implements RateLimiterLogger {
+  log(...args: any[]): void {
+    // Use your own logging system
+    myLogger.info(...args);
+  }
+
+  warn(...args: any[]): void {
+    myLogger.warn(...args);
+  }
+
+  error(...args: any[]): void {
+    myLogger.error(...args);
+  }
+}
+
+const limiter = createRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 100,
+  logger: new CustomLogger(), // Optional; defaults to console
+});
+</code></pre>
+<h3>Algorithm Selection</h3>
+<pre class="prettyprint source lang-typescript"><code>const limiter = createRateLimiter({
+  algorithm: 'token-bucket',
+  windowMs: 60_000,
+  maxRequests: 100,
+  tokenBucket: {
+    bucketSize: 100,
+    refillRate: 1, // one token per second
+  },
+});
+</code></pre>
+<h3>Custom Response on Block</h3>
+<pre class="prettyprint source lang-typescript"><code>const limiter = createRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 100,
+  onBlocked: (req, res, info) => {
+    res.status(429).json({
+      error: 'Rate limit exceeded',
+      retryAfter: Math.ceil(info.resetInMs / 1000),
+    });
+  },
+});
+</code></pre>
+<h3>With Callbacks</h3>
+<pre class="prettyprint source lang-typescript"><code>const limiter = createRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 100,
+  onLimitReached: (req, res, info) => {
+    console.warn(`Limit reached for ${info.key}`);
+    // Send alert, log, etc.
+  },
+  onBlocked: (req, res, info) => {
+    console.error(`Request blocked for ${info.key}`);
+    res.status(429).send('Too many requests');
+  },
+});
+</code></pre>
+<h3>With Custom Store (Redis Example)</h3>
+<pre class="prettyprint source lang-typescript"><code>import redis from 'redis';
+
+const redisClient = redis.createClient();
+
+const customStore: RateLimiterStore = {
+  async get(key: string) {
+    const data = await redisClient.get(key);
+    return data ? JSON.parse(data) : null;
+  },
+  async set(key: string, entry: any) {
+    await redisClient.set(key, JSON.stringify(entry), 'EX', 3600);
+  },
+  async reset(key: string) {
+    await redisClient.del(key);
+  },
+};
+
+const limiter = createRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 100,
+  store: customStore,
+});
+</code></pre>
+<h2>Response Headers</h2>
+<p>When <code>headers: true</code>, the middleware adds:</p>
+<ul>
+<li><code>X-RateLimit-Limit</code> – Total requests allowed in the window</li>
+<li><code>X-RateLimit-Remaining</code> – Remaining requests in current window</li>
+<li><code>X-RateLimit-Reset</code> – Unix timestamp when window resets (seconds)</li>
+<li><code>Retry-After</code> – Seconds to wait before retrying (only when blocked)</li>
+</ul>
+<pre class="prettyprint source"><code>HTTP/1.1 200 OK
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+X-RateLimit-Reset: 1622548234
+</code></pre>
+<h2>Error Responses</h2>
+<p>When a request is blocked:</p>
+<pre class="prettyprint source lang-json"><code>{
+  &quot;error&quot;: &quot;Too Many Requests&quot;,
+  &quot;retryAfter&quot;: 45
+}
+</code></pre>
+<p>Status code: <code>429 Too Many Requests</code></p>
+<h2>Running the Example</h2>
+<pre class="prettyprint source lang-bash"><code># Build the TypeScript
+npm run build
+
+# Run the example server
+npm run dev
+</code></pre>
+<p>The server will start on <code>http://localhost:3000</code> with a 10 requests/60 seconds limit.</p>
+<p>Test with:</p>
+<pre class="prettyprint source lang-bash"><code># Should succeed
+curl http://localhost:3000/
+
+# Make 10 requests
+for i in {1..10}; do curl http://localhost:3000/; done
+
+# 11th request should be blocked
+curl http://localhost:3000/
+</code></pre>
+<h2>API Reference</h2>
+<h3><code>createRateLimiter(config: RateLimiterConfig): RequestHandler</code></h3>
+<p>Factory function that returns an Express middleware.</p>
+<h3>Types</h3>
+<pre class="prettyprint source lang-typescript"><code>interface TokenBucketConfig {
+  bucketSize?: number; // Maximum tokens in the bucket
+  refillRate?: number; // Tokens replenished per second
+}
+
+interface RateLimitInfo {
+  key: string;                    // Client identifier
+  windowMs: number;               // Window size or evaluation interval
+  maxRequests: number;            // Request limit or bucket capacity
+  currentRequests: number;        // Used requests or consumed tokens
+  remainingRequests: number;      // Remaining allowed requests or available tokens
+  resetInMs: number;              // ms until the next reset or token refill
+}
+
+interface RateLimiterLogger {
+  log(...args: any[]): void;      // General logging
+  warn(...args: any[]): void;     // Warning logging
+  error(...args: any[]): void;    // Error logging
+}
+
+interface RateLimiterStore {
+  get(key: string): Promise&lt;RateLimiterEntry | null>;
+  set(key: string, entry: RateLimiterEntry): Promise&lt;void>;
+  reset(key: string): Promise&lt;void>;
+}
+</code></pre>
+<h2>Algorithms</h2>
+<p>This middleware supports two rate limiting algorithms:</p>
+<ul>
+<li><code>sliding-window</code>: ideal for request quotas over a moving time window.</li>
+<li><code>token-bucket</code>: ideal for smoothing traffic and allowing controlled bursts.</li>
+</ul>
+<h3>Sliding window behavior</h3>
+<ul>
+<li>The middleware tracks request timestamps.</li>
+<li>It counts requests in the interval <code>[now - windowMs, now]</code>.</li>
+<li>If the count exceeds <code>maxRequests</code>, the request is blocked.</li>
+</ul>
+<h3>Token bucket behavior</h3>
+<ul>
+<li>Each client has a bucket of tokens.</li>
+<li>The bucket refills at <code>refillRate</code> tokens per second.</li>
+<li>Each request consumes one token.</li>
+<li>If tokens are unavailable, the request is blocked until tokens replenish.</li>
+</ul>
+<h2>Error Handling</h2>
+<p>The middleware implements <strong>fail-open</strong> semantics:</p>
+<ul>
+<li>If the store fails to respond, the request is <strong>allowed</strong>.</li>
+<li>An error is logged for monitoring.</li>
+<li>This ensures the rate limiter doesn't become a point of failure.</li>
+</ul>
+<h2>Performance Considerations</h2>
+<ul>
+<li><strong>In-memory store</strong>: Suitable for single-instance deployments; avoid using it for very high client counts.</li>
+<li><strong>Distributed store</strong>: Use Redis/Memcached for multi-instance deployments.</li>
+<li><strong>Cleanup</strong>: In-memory store periodically removes stale entries to prevent memory growth.</li>
+</ul>
+<h2>License</h2>
+<p>MIT</p></article>
+    </section>
+
+
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="InMemoryStore.html">InMemoryStore</a></li></ul><h3>Global</h3><ul><li><a href="global.html#createDefaultLogger">createDefaultLogger</a></li><li><a href="global.html#createRateLimiter">createRateLimiter</a></li><li><a href="global.html#defaultKeyGenerator">defaultKeyGenerator</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.5</a>
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>
