@@ -1,6 +1,10 @@
-# Rate Limiter Middleware
+# simple-rate-limiter
 
 A TypeScript-based Express rate limiter middleware supporting both sliding window and token bucket algorithms for per-IP request limiting. Designed for transparency, observability, and extensibility.
+
+> Documentation is published with GitHub Pages at: https://amarpreetbhatia.github.io/simple-rate-limiter
+>
+> Generate locally with `npm run docs:build` and open the output in `docs/`.
 
 ## Features
 

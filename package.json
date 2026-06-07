@@ -1,7 +1,8 @@
 {
-  "name": "demo-rate-limiter",
+  "name": "simple-rate-limiter",
   "version": "1.0.0",
   "description": "A Node.js Express rate limiter middleware with sliding window algorithm",
+  "homepage": "https://amarpreetbhatia.github.io/simple-rate-limiter",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -9,7 +10,9 @@
     "dev": "ts-node src/example.ts",
     "start": "node dist/example.js",
     "test": "jest",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "docs:clean": "rm -rf docs",
+    "docs:build": "npm run build && jsdoc -c jsdoc.json"
   },
   "keywords": [
     "rate-limiting",
@@ -28,6 +31,7 @@
     "@types/node": "^20.3.1",
     "@types/supertest": "^2.0.12",
     "jest": "^29.5.0",
+    "jsdoc": "^4.0.3",
     "supertest": "^7.2.2",
     "ts-jest": "^29.1.0",
     "typescript": "^5.1.3",
