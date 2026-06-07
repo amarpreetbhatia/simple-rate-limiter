@@ -23,6 +23,12 @@ npm install express
 npm install --save-dev @types/express typescript ts-node
 ```
 
+Once the package is published, install it with:
+
+```bash
+npm install simple-rate-limiter
+```
+
 ## Quick Start
 
 ```typescript

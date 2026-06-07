@@ -3,6 +3,22 @@
   "version": "1.0.0",
   "description": "A Node.js Express rate limiter middleware with sliding window algorithm",
   "homepage": "https://amarpreetbhatia.github.io/simple-rate-limiter",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/amarpreetbhatia/simple-rate-limiter.git"
+  },
+  "bugs": {
+    "url": "https://github.com/amarpreetbhatia/simple-rate-limiter/issues"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "prepare": "npm run build",
+  "engines": {
+    "node": ">=18"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
