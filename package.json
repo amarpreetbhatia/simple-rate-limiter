@@ -1,5 +1,5 @@
 {
-  "name": "simple-rate-limiter",
+  "name": "@amarpreetbhatia/simple-rate-limiter",
   "version": "1.0.0",
   "description": "A Node.js Express rate limiter middleware with sliding window algorithm",
   "homepage": "https://amarpreetbhatia.github.io/simple-rate-limiter",
